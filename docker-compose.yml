@@ -15,21 +15,14 @@ services:
     image: redis:7
     ports: ["6379:6379"]
 
+  # S3-compatible object storage with a web console (http://localhost:9001).
+  # minio/minio was removed from Docker Hub; bitnamilegacy/minio is a frozen,
+  # still-published build. Any S3 endpoint (AWS, R2) works instead via .env.
   minio:
-    image: minio/minio
-    command: server /data --console-address ":9001"
+    image: bitnamilegacy/minio:latest
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_DEFAULT_BUCKETS: testcases   # created automatically on first start
     ports: ["9000:9000", "9001:9001"]   # 9000 = S3 API, 9001 = web console
-    volumes: ["./.docker-data/minio:/data"]
-
-  # One-shot: create the "testcases" bucket, then exit.
-  minio-init:
-    image: minio/mc
-    depends_on: [minio]
-    entrypoint: >
-      /bin/sh -c "
-      until mc alias set local http://minio:9000 minioadmin minioadmin; do sleep 1; done;
-      mc mb --ignore-existing local/testcases;
-      exit 0"
+    volumes: ["./.docker-data/minio:/bitnami/minio/data"]
