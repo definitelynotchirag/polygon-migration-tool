@@ -2,7 +2,6 @@
 
 > **Instructions**: Document the three highest-priority product issues and the three highest-priority code issues. Rank the issues within each category from highest to lowest priority.
 > Replace the example entries with your actual findings and explain why each issue deserves its priority. Complete all four questions in the Edge Case Analysis section.
-> Rename this file to `ISSUES.md` before submitting.
 
 ## Summary
 
