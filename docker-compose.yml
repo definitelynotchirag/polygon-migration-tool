@@ -24,5 +24,7 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
       MINIO_DEFAULT_BUCKETS: testcases   # created automatically on first start
+      MINIO_BROWSER: "on"
+      MINIO_CONSOLE_PORT_NUMBER: 9001
     ports: ["9000:9000", "9001:9001"]   # 9000 = S3 API, 9001 = web console
     volumes: ["./.docker-data/minio:/bitnami/minio/data"]
