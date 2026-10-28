@@ -127,6 +127,20 @@ POLYGON_API_SECRET = os.getenv("POLYGON_API_SECRET")
 if not POLYGON_API_KEY or not POLYGON_API_SECRET:
     raise Exception("POLYGON_API_KEY and POLYGON_API_SECRET must be set in the .env file")
 
+# ---- Test-case storage (see problems/storage/) -------------------------------
+# STORAGE_PROVIDER selects the backend: "s3" (AWS S3 / MinIO / Cloudflare R2) or "azure".
+STORAGE_PROVIDER = os.getenv("STORAGE_PROVIDER", "s3").strip().lower()
+
+# S3-compatible settings. Leave S3_ENDPOINT_URL empty for AWS; set it for MinIO / R2.
+S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+S3_ACCESS_KEY_ID = os.getenv("S3_ACCESS_KEY_ID")
+S3_SECRET_ACCESS_KEY = os.getenv("S3_SECRET_ACCESS_KEY")
+S3_REGION = os.getenv("S3_REGION", "us-east-1")
+S3_ENDPOINT_URL = os.getenv("S3_ENDPOINT_URL", "")
+# Optional: a browser URL for the storage console, shown in the UI after upload.
+STORAGE_CONSOLE_URL = os.getenv("STORAGE_CONSOLE_URL", "")
+
+# Azure Blob Storage settings (used when STORAGE_PROVIDER=azure).
 AZURE_STORAGE_ACCOUNT_URL = os.getenv("AZURE_STORAGE_ACCOUNT_URL")
 AZURE_TENANT_ID = os.getenv("AZURE_TENANT_ID")
 AZURE_CLIENT_ID = os.getenv("AZURE_CLIENT_ID")

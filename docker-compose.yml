@@ -1,0 +1,35 @@
+# Local infrastructure for the Polygon Migration Tool.
+#   docker compose up -d
+# PostgreSQL (required), Redis (test-case cache), MinIO (S3-compatible object storage).
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: polygon_migration
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports: ["5432:5432"]
+    volumes: ["./.docker-data/postgres:/var/lib/postgresql/data"]
+
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports: ["9000:9000", "9001:9001"]   # 9000 = S3 API, 9001 = web console
+    volumes: ["./.docker-data/minio:/data"]
+
+  # One-shot: create the "testcases" bucket, then exit.
+  minio-init:
+    image: minio/mc
+    depends_on: [minio]
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 minioadmin minioadmin; do sleep 1; done;
+      mc mb --ignore-existing local/testcases;
+      exit 0"
