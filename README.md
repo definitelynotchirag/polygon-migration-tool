@@ -6,7 +6,7 @@ PolygonMigration is a Django-based web application designed to facilitate the mi
 ## Features
 - **Polygon Integration:** Fetch problems and test cases directly from Polygon using API keys.
 - **Database Migration:** Store problem statements, metadata, and test cases in a PostgreSQL database.
-- **Azure Blob Storage:** Upload test cases to Azure Blob Storage for scalable storage and retrieval.
+- **Pluggable Cloud Storage:** Upload test cases to any S3-compatible service (AWS S3, MinIO, Cloudflare R2) or Azure Blob Storage via `problems/storage/`.
 - **Tagging & Metadata:** Add, search, and manage tags and difficulty levels for each problem.
 - **Admin Interface:** Manage users, problems, tags, and test cases via Django admin.
 - **Custom User Model:** Email-based authentication with extended user profile fields.
@@ -17,116 +17,71 @@ PolygonMigration is a Django-based web application designed to facilitate the mi
 2. **Fetch Problem:** Enter a Polygon Problem ID to fetch problem details and test cases.
 3. **Review & Tag:** Review the fetched problem, select difficulty, and add tags.
 4. **Migrate to Database:** Save the problem and metadata to the local database.
-5. **Migrate Test Cases:** Optionally, migrate test cases to the database and/or Azure Blob Storage.
+5. **Migrate Test Cases:** Optionally, migrate test cases to the database and/or cloud storage.
 6. **View & Manage:** Use the admin interface for advanced management of problems, tags, and users.
 
-## Setup Instructions
-### 1. Prerequisites
-- Python 3.8+
-- PostgreSQL database
-- [Azure account](https://portal.azure.com/) with Blob Storage and an AAD application
-- Polygon API credentials
+## Quick Start (Docker for infrastructure)
 
-### 2. Clone the Repository
 ```bash
-git clone <repo-url>
-cd Polygon-migration/PolygonMigration
-```
+# 1. Infrastructure: PostgreSQL, Redis, MinIO (S3-compatible storage with a web console)
+docker compose up -d
 
-### 3. Create and Activate a Virtual Environment
-```bash
-python -m venv venv
-# On Windows:
-venv\Scripts\activate
-# On Unix/Mac:
-source venv/bin/activate
-```
+# 2. Python environment
+python3.12 -m venv .venv && source .venv/bin/activate      # or: uv venv --python 3.12 .venv
+pip install -r requirement.txt
 
-### 4. Install Dependencies
-```bash
-pip install -r ../requirement.txt
-```
+# 3. Configuration
+cd PolygonMigration
+cp .env.example .env     # fill in POLYGON_API_KEY / POLYGON_API_SECRET and a SECRET_KEY;
+                         # the DB / Redis / S3 defaults already match docker-compose.yml
 
-### 5. Configure Environment Variables
-Copy `PolygonMigration/.env.example` to `PolygonMigration/.env`, beside `manage.py`, and configure the following variables:
-```env
-SECRET_KEY=your-django-secret-key
-DEBUG=True
-ALLOWED_HOSTS=localhost,127.0.0.1
-
-# Database
-DB_NAME=your_db_name
-DB_USER=your_db_user
-DB_PASSWORD=your_db_password
-DB_HOST=localhost
-DB_PORT=5432
-
-# Polygon API
-POLYGON_API_KEY=your_polygon_api_key
-POLYGON_API_SECRET=your_polygon_api_secret
-
-# Azure Blob Storage
-AZURE_STORAGE_ACCOUNT_URL=https://<your-storage-account>.blob.core.windows.net/
-AZURE_TENANT_ID=your-tenant-id
-AZURE_CLIENT_ID=your-client-id
-AZURE_USERNAME=your-azure-username
-AZURE_PASSWORD=your-azure-password
-AZURE_CONTAINER_NAME=your-container-name
-
-# Redis (optional, for caching)
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=
-REDIS_SSL=False
-```
-
-### 6. Database Setup
-- Ensure PostgreSQL is running.
-- **If you have not set up the database and user yet, follow these steps:**
-
-  1. Open a terminal and access the PostgreSQL prompt (you may need to enter your system password):
-     ```bash
-     psql -U postgres
-     ```
-  2. Create a new database (replace `your_db_name` with your desired database name):
-     ```sql
-     CREATE DATABASE your_db_name;
-     ```
-  3. Create a new user (replace `your_db_user` and `your_db_password` with your desired username and password):
-     ```sql
-     CREATE USER your_db_user WITH PASSWORD 'your_db_password';
-     ```
-  4. Grant all privileges on the new database to the new user:
-     ```sql
-     GRANT ALL PRIVILEGES ON DATABASE your_db_name TO your_db_user;
-     ```
-  5. Exit the PostgreSQL prompt:
-     ```sql
-     \q
-     ```
-
-- Update your `.env` file with the database name, user, and password you just created.
-- Run migrations:
-```bash
+# 4. Database + admin user + server
 python manage.py migrate
-```
-
-### 7. Create a Superuser
-```bash
 python manage.py createsuperuser
-```
-
-### 8. Collect Static Files (for production)
-```bash
-python manage.py collectstatic
-```
-
-### 9. Run the Development Server
-```bash
 python manage.py runserver
 ```
 
-Access the app at [http://localhost:8000/](http://localhost:8000/)
+- App: http://localhost:8000/ (login at `/users/login/`, Django admin at `/admin/`)
+- Storage console (MinIO): http://localhost:9001/ (user/password `minioadmin`), bucket `testcases`
+
+## Cloud Storage
+
+Test-case files are written through the `TestCaseStorage` interface in
+`problems/storage/base.py`. The migration flow never touches a provider SDK directly;
+`problems.storage.get_storage()` returns the backend selected by `STORAGE_PROVIDER`:
+
+| `STORAGE_PROVIDER` | Backend | Env vars |
+|---|---|---|
+| `s3` (default) | `problems/storage/s3.py` — AWS S3, MinIO, Cloudflare R2, any S3 API | `S3_BUCKET_NAME`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_REGION`, `S3_ENDPOINT_URL` (empty for AWS) |
+| `azure` | `problems/storage/azure.py` — Azure Blob Storage (original implementation) | `AZURE_STORAGE_ACCOUNT_URL`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_USERNAME`, `AZURE_PASSWORD`, `AZURE_CONTAINER_NAME` |
+
+File layout (keyed by the **database** problem id, test numbers 1-based and zero-padded):
+
+```
+test_cases/{problem_id}/01        # input of test 1
+test_cases/{problem_id}/01.a      # expected output of test 1
+test_cases/{problem_id}/custom_checker       # compiled custom checker (if the problem has one)
+test_cases/{problem_id}/custom_checker.cpp   # checker source, only if compilation failed
+```
+
+Re-running the storage migration deletes everything under `test_cases/{problem_id}/`
+before uploading, so storage always mirrors the current Polygon test set.
+
+To add a provider: subclass `TestCaseStorage`, implement `upload_bytes`, `list_keys`,
+`delete_prefix`, and add a branch to `get_storage()`.
+
+## Manual Setup (without Docker)
+
+Install PostgreSQL and Redis locally, create a database and user:
+
+```sql
+CREATE DATABASE polygon_migration;
+CREATE USER postgres WITH PASSWORD 'postgres';
+GRANT ALL PRIVILEGES ON DATABASE polygon_migration TO postgres;
+```
+
+Point `DB_*` and `REDIS_*` in `.env` at them, and either run any S3-compatible
+service locally or set `S3_*` to a real bucket (AWS S3 / Cloudflare R2).
 
 ## Usage
 - **Login:** Go to `/users/login/` and log in as a staff user.
@@ -136,7 +91,7 @@ Access the app at [http://localhost:8000/](http://localhost:8000/)
   - Fetch a problem by Polygon ID.
   - Select difficulty and tags.
   - Migrate to the database.
-  - Migrate test cases to the database and/or Azure.
+  - Migrate test cases to the database and/or cloud storage.
 
 ## Environment Variables Reference
 | Variable                  | Description                                 |
@@ -151,12 +106,14 @@ Access the app at [http://localhost:8000/](http://localhost:8000/)
 | DB_PORT                   | PostgreSQL port                             |
 | POLYGON_API_KEY           | Polygon API key                             |
 | POLYGON_API_SECRET        | Polygon API secret                          |
-| AZURE_STORAGE_ACCOUNT_URL | Azure Blob Storage account URL              |
-| AZURE_TENANT_ID           | Azure AD tenant ID                          |
-| AZURE_CLIENT_ID           | Azure AD application client ID              |
-| AZURE_USERNAME            | Azure username                              |
-| AZURE_PASSWORD            | Azure password                              |
-| AZURE_CONTAINER_NAME      | Azure Blob container name                   |
+| STORAGE_PROVIDER          | `s3` or `azure`                             |
+| S3_BUCKET_NAME            | Bucket for test-case files                  |
+| S3_ACCESS_KEY_ID          | S3 access key                               |
+| S3_SECRET_ACCESS_KEY      | S3 secret key                               |
+| S3_REGION                 | S3 region (`auto` for R2)                   |
+| S3_ENDPOINT_URL           | Custom endpoint (MinIO / R2); empty for AWS |
+| STORAGE_CONSOLE_URL       | Optional link to the storage console shown in the UI |
+| AZURE_*                   | Azure Blob Storage credentials (when `STORAGE_PROVIDER=azure`) |
 | REDIS_HOST                | Redis host (optional)                       |
 | REDIS_PORT                | Redis port (optional)                       |
 | REDIS_PASSWORD            | Redis password (optional)                   |
@@ -167,6 +124,7 @@ Access the app at [http://localhost:8000/](http://localhost:8000/)
 PolygonMigration/
 ├── contents/         # Topic and content management
 ├── problems/         # Polygon migration logic, models, views
+│   └── storage/      # TestCaseStorage interface + S3 / Azure backends
 ├── users/            # Custom user model and authentication
 ├── static/           # Static files (CSS, JS, etc.)
 ├── staticfiles/      # Collected static files (for production)
