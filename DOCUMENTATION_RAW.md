@@ -83,9 +83,25 @@ ISSUE: its coz everything is under one single try  the fetch and the migrations 
 		- Migrate Test Description to Database
 
 #### 2. What data the frontend sends to the backend.
-
+Two fields:
+- problem_id
+- csrfmiddlewaretoken
+Also browser sends the session cookie as well as the csrf token from frontend
+The frontend sends it to the index view. 
 
 #### 3. What the backend does, in order.
+index reads every possible field at views.py:125-131, but this form only fills one. The rest get empty values:
+
+polygon_id = request.POST.get('problem_id')        # '999999'
+migrate_to_azure = request.POST.get('migrate_to_azure')   # None
+migrate_to_db = request.POST.get('migrate_to_db')         # None
+migrate_test_cases_to_db = request.POST.get('migrate_test_cases_to_db')  # None
+
+As the migrate values are None , every migration block gets skipped and the view only fetches and displays the problem. 
+
+
+
+
 #### 4. Which external APIs are called, if any.
 #### 5. What is read or written in the database or storage.
 #### 6. What the user sees when the action completes.
