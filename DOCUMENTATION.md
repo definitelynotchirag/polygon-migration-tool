@@ -1,119 +1,91 @@
-Polygon Migration Tool how it actualy works
+Polygon is a tool made by codeforces to handle the questions and test cases and solution data from codeforces in a structured way. It provides apis and a good way to create new questions and manage them.
+Polygon Migration Tool is a tool used to migrate codeforces question data from Polygon into your own database and storage.
 
-for whoever touches this next. each button from the browser to the DB or to storage with the file and function to open
+This documentation will walk through all the user flows which are there in the app
 
-The shape of it
+## User flows
 
-django 5. three apps users (login) problems (everything else) contents (a Topic model not used by the migration). postgres holds problems tags and test case rows. redis caches the test cases fetched from polygon for 30 minutes. object storage holds the actual test files minIO locally any S3 or azure in prod
+### User login
+- In case of user login the user has to enter the admin credentials and the password in order to login.  It has a simple login page at  /users/login/ view. It handles both the frontend page and the api
+- GET gives you the form, and POST does call the api with the body of email and password to login
+- It has a two input boxes and a button to submit. First the email, the password and a button to submit it "Login"
+- The login calls the /users/login api view
+#### Login api:
+- The api checks if the user is already authenticated if it is then it logs the user out (potential bug, this should not happen). This thing runs on both the GET and POST hence it can happen that just when the user visits the url /users/login by mistake from frontend even tho he just logged in then he can get logged out which is bad thing. If the user is already authenticated then it should send the user to the dashboard instead of login it out!
+- Lets say we do the first fix then The homepage sends anyone who is not a staff to the login page again. so lets say if a user was logged in and his staff access was later removed then it will be thrown to the login page. But the login page does not checks for the staff check on GET. so it will say that you should go to the homepage! so the user will be stuck on the loop. as it was previously set that if the user is already authenticated and he goes to the login page then he should be logged out, this thing prevents the loop but this should only happen for the users which are non staff. Non staff users should be logged out and staff users who are already logged in should be sent to the homepage.
+- something like this 
+	`if request.user.is_authenticated:`
+    `if request.user.is_staff:`
+        `return redirect('problems:index')`
+    `logout(request)`
+- Now if the method in the view is POST what it does it gets the email and password from the email body and then there are two important functions: 
+	1. authenticate() : it takes the username as email, email as email and password as the password. The task of this authenticate function is just to just check whether the user and exists and if the user is actually active and if the user's password is correct. IT DOES NOT DO THE TASK OF ACTUALLY LOGIN THE USER. 
+		Its job is to just send the users object to two backends. First is the Emailbackend. It is a custom Authentication backend which has an authenticate function. 
+		- It takes the user Model and gets the email and password and searches the user through email in the Users table
+		- if the user does not exist then it returns None
+		- if the user exist then it checks whether the user is active and checks the password is correct and then if this is true then it returns the user object otherwise it returns None
+		Now lets say the user entered the wrong password then in that case it will move to the django auth Modelbackend. which also does the similar stuff of checking the password and the user exists and is_active.
+		The separae EmailBackend was not necessary. The 
+		
+	    USERNAME_FIELD = 'email'
 
-there is one page / template problems/templates/problems/index.html with 4 forms. all 4 POST back to /. one view index in problems/views.py looks at which hidden field arrived and picks the branch problem_id alone means fetch migrate_to_db means save the problem migrate_test_cases_to_db means save the test previews migrate_to_azure means upload to storage (the field name is left over from the azure days)
+		this line does the stuff of making the username field as email, and also django also allows you to completely remove the username field itself and just use the email field for everything. Considering that the username field might be get used in the near future( currently its not getting used anywhere but it is still a required filed in the user model and the admin can search through it). So we could have been fine without this Emailbackend.
+	Now moving on lets say the user is returned in through any of the authentication backend and if the user is staff then the user is loggedd in using the `login` function 
 
-the main thing to know before reading anything else the fetch code in index runs on every POST. so every migrate button re-fetches the problem from polygon before doing its own work
+	Now what the login function does is it does the actual stuff of login the user by saving its session so that the user does not need to login on every request
+	- it creates a django session in the django session table with the user id
+	- it creates a session hash which points out to that record and that session hash is saved in the user cookie.
+	- this cookie is sent in every request from the user to the backend and the django then uses that hash to check the session.
+	- It also updates the request.user for that request and also saves the last login time.
+	- if the session exists and valid then request.user.is_authenticated becomes True becomes true everytime
+ Now if the login is successful it redirects the user to the problems index page or else it returns the error that either invalid password email or need staff access and sends back to the login page
 
-all polygon calls go through the PolygonAPI class in problems/polygon_api.py. storage goes through get_storage() in problems/storage
+#### Logout api:
+- it logs the user out of the by removing the user from the request 
+- it also flushes the session from the django sessions table so the session is no longer valid anymore.
 
-Login
+### Fetching a problem from Polygon
 
-you open /users/login/ type email and password submit. that POSTs email password and the CSRF token to login_view in users/views.py
+#### 1. What the user clicks or submits.
+- the user once authenticated gets redirected from `/user/login` to the `/` page
+- Here the user has one input box where it needs to enter the polygon problem ID it wants to fetch. It is a form which sends a POST request to the backend
+- And then there is this button "Fetch Problem" which actually does the stuff of submitting the form.
+- The fetch form takes the problem_id, removes the default submit through 
+  `e.preventDefault()`
+- it shows a loading state a spinner and loading dialog to the user 
+- it waits for 50ms once the user presses the Fetch button so that the browser has the time to draw the spinner and then it submits the question. this is added  for the fix for the original spinner problem which i dont know what exactly is!!
+- if the user enters a wrong id then it shows a red error box on the same page and nothing gets saved. The message that the user will see is : `
+Migration failed and all changes have been rolled back. Reason: ...`
+And it can be misleading. coz nothing needs to had to get migrated it was just a fetch. 
+ISSUE: its coz everything is under one single try  the fetch and the migrations sit in the same try block which is why a simple typo gets a "rolled back" message
+![[Pasted image 20261031222921.png]]
+- if the problem id is correct then The user sees the Fetched problem which includes:
+	- The title
+	- The polygon id
+	- The database problem id
+	- Algopath link
+	- slug
+	- current difficulty set
+	- Tags set and an option to add new tags or delete existing tags
+	- Time Limit in ms
+	- Memory Limit in MB
+	- Checker Type
+	- Test Cases Count
+	- Problem Statement rendered directly without any html or lxml formating applied
+	- Input Format rendered directly without any html or lxml formating applied
+	- Output Format rendered directly without any html or lxml formating applied
+	- Notes rendered directly without any html or lxml formating applied
+	- All test cases
+	- Main Correct Solution
+	- And three buttons:
+		- Create/Update problem in DB
+		- Migrate Test Cases to Storage
+		- Migrate Test Description to Database
 
-login_view logs you out first if you were already logged in then calls authenticate with the email. settings.py puts users.backends.EmailBackend first in AUTHENTICATION_BACKENDS so the lookup is User.objects.get(email=...) then check_password. the user model is users.User with email as the username field. if the user exists but is_staff is false you get "You do not have staff access" so non staff accounts cant use the tool at all. on success login() writes the session (1 day SESSION_COOKIE_AGE) and redirects to /
+#### 2. What data the frontend sends to the backend.
 
-no external APIs. DB reads users_user writes django_session. you land on the migration page with the problem id box. hitting / without a login bounces you to /users/login/ because of the user_passes_test decorator on index
 
-Fetch a problem
-
-you type the polygon id (mine is 616807) and click Fetch Problem. POST to / with just problem_id
-
-in index roughly in order
-
-1. Problem.objects.filter(polygon_id=...) to see if its already in the DB. if it is it also grabs the reference solution right now problem.updateWorkingCopy problem.solutions then problem.viewSolution for the one tagged MA
-2. get_problem_info which is Polygon problem.info. time limit memory limit io files
-3. download_and_extract_package. calls problem.packages picks the newest package with type standard downloads it with problem.package as a zip into a temp dir finds problem.html inside reads it deletes the dir. this is why the problem needs a built standard package on polygon otherwise you get "No standard package found"
-4. parse_problem_html pulls title legend input spec output spec and notes out of that HTML with lxml as HTML strings
-5. Tests. since no migrate flag is set it calls get_all_test_cases problem.tests for the list then for every test problem.testInput and problem.testAnswer. each test becomes a dict with index manual is_sample (from useInStatements) description input output. the whole list is written to redis by store_test_cases_in_redis with a 30 min expiry keys like polygon_migration_test_cases_616807_count and _test_1 to _test_N
-6. problem.checker. std::ncmp.cpp becomes ncmp anything not in the known list becomes custom. get_custom_checker_info calls problem.checker again
-7. get_test_cases which is problem.tests again just to count them
-8. everything goes into context as fetched_problem and all_test_cases and the page renders
-
-for my 13 test problem thats about 30 polygon calls. nothing is written to postgres only the redis cache
-
-you see the details table (id limits checker test count) the statement input output and notes boxes (as raw HTML text see ISSUES.md P2) the difficulty dropdown and tag box the yellow and green buttons the table of all test cases with a View Full button per cell and below that the third button and the reference solution if the problem is already in the DB
-
-Migrate the problem to the DB
-
-you pick a difficulty add tags (the tag widget keeps them as hidden inputs named tags) click the yellow Create/Update problem in Database. POST to / with problem_id migrate_to_db=1 difficulty one tags value per tag optionally new_tag
-
-the whole fetch from above runs again except the tests now come from redis if they are there. if difficulty is empty it stops with "Please select a difficulty level" and saves nothing. everything after that is inside transaction.atomic so an error anywhere rolls all of it back
-
-then it looks up the Problem by polygon_id. found updates the row in place with title slug difficulty statement formats limits checker test count notes. not found Problem.objects.create. the slug is slugify(title) and its unique in the model thats what breaks when two problems share a title (Q3 in ISSUES.md)
-
-tags extra_tags.clear() then ProblemTag.objects.get_or_create for each submitted tag plus new_tag. so the tags you submit replace whatever was there
-
-samples filters the cached tests on is_sample and for each one either updates the existing SampleTestCase at that position or creates a new one input and output rstripped order 1 to n. old extra samples are not deleted
-
-then it fetches the reference solution again (problem.solutions problem.viewSolution) for display
-
-DB writes problems_problem problems_problemtag the M2M table problems_problem_extra_tags problems_sampletestcase
-
-you see a blue Database Operation banner "Problem 'A Plus B' created in database successfully" (or updated). the details table now shows the DB id (mine was 1) the green and the test case buttons get enabled and the main solution shows at the bottom
-
-Migrate test cases to the DB
-
-scroll under the test case table click Migrate Test Description to Database. POST with problem_id and migrate_test_cases_to_db=1
-
-fetch runs again tests from redis if cached. if the problem is not in the DB yet it raises "Please migrate the problem to the database first" and the atomic block rolls back
-
-then for each test rstrip input and output skip the test if either is empty cut both to 260 characters then update the existing ProblemTestCase at that position or create a new one with is_sample description and order. rows beyond the new count are left as they were (Q2 in ISSUES.md)
-
-DB writes problems_problemtestcase. no extra polygon calls beyond the fetch
-
-you see a green "Test cases description migrated to database Successfully". the word description is the hint these rows are 260 char previews not the full tests
-
-Upload test cases to storage
-
-click the green Migrate Test Cases to Storage. POST with problem_id and migrate_to_azure=1
-
-this branch runs first in index before the fetch. it looks up the Problem and if its not in the DB you get a red "has not been migrated to the database yet". then get_storage() reads STORAGE_PROVIDER from settings and returns either S3Storage or AzureBlobStorage the view never knows which. it clears an old redis key pattern (delete_problem_test_case_cache harmless) calls problem.checker to show an info banner if the checker is custom then calls migrate_test_cases_to_storage on PolygonAPI with the polygon id the storage object and the DB id
-
-migrate_test_cases_to_storage gets the tests from redis (or polygon then caches them) calls storage.empty_problem which deletes everything under test_cases/{db id}/ then for every test that has both input and output calls storage.upload_test_case which writes two objects. empty ones are skipped and the number is the position in the list 1 based. then upload_custom_checker if the checker is custom it fetches the source with problem.viewFile compiles it with g++ (compile_custom_checker) uploads the binary as custom_checker or the source as custom_checker.cpp if compiling failed. it returns counts of uploaded skipped and deleted
-
-back in the view the success message is built from those counts and storage.list_problem_files puts the bucket listing on the page. then the normal fetch runs to re-render
-
-DB is read only here just the Problem id. storage gets a delete then writes of test_cases/{db id}/01 01.a 02 02.a and so on plus custom_checker if there is one
-
-you see a green banner like "Uploaded 13 test case(s) to S3-compatible storage (http://localhost:9000) under test_cases/1/ (replaced 0 existing file(s))" the file list and a link to the storage console. in minIO at http://localhost:9001 bucket testcases test_cases/1/01 contains `1 2` and test_cases/1/01.a contains `3`
-
-Polygon API
-
-every call is a POST to https://polygon.codeforces.com/api/<method> with form data done by PolygonAPI._make_request. methods used
-
-- problem.info for the limits
-- problem.packages and problem.package to find and download the standard package zip thats where the statement HTML comes from
-- problem.tests for the test list (index useInStatements description)
-- problem.testInput and problem.testAnswer for the content of each test
-- problem.checker for the checker name
-- problem.updateWorkingCopy problem.solutions problem.viewSolution for the reference solution
-- problem.viewFile for a custom checker's source
-
-auth is in _generate_api_sig. every request carries apiKey time (unix seconds) and apiSig. apiSig is a random 6 character string followed by the SHA-512 of `<rand>/<method>?<params sorted by name url encoded>#<secret>`. key and secret come from POLYGON_API_KEY and POLYGON_API_SECRET in .env and settings.py refuses to start without them. polygon answers JSON with status and result status FAILED becomes an exception carrying polygon's comment. testInput testAnswer viewSolution and viewFile return plain text and go through _make_plain_request
-
-Storage
-
-the migration code only knows the TestCaseStorage interface in problems/storage/base.py upload_bytes list_keys delete_prefix and on top of those upload_test_case empty_problem upload_checker list_problem_files. get_storage() picks the implementation from STORAGE_PROVIDER
-
-s3 is problems/storage/s3.py with boto3. works with AWS S3 (leave S3_ENDPOINT_URL empty) minIO or Cloudflare R2 (set the endpoint). config is S3_BUCKET_NAME S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_REGION S3_ENDPOINT_URL. azure is problems/storage/azure.py the original Azure Blob code with the AZURE_* vars
-
-files are named like this
-
-```
-test_cases/{db problem id}/01        input of test 1
-test_cases/{db problem id}/01.a      expected output of test 1
-test_cases/{db problem id}/custom_checker       compiled checker only for custom checkers
-test_cases/{db problem id}/custom_checker.cpp   source only if compiling failed
-```
-
-the number is the 1 based position in the test list zero padded to two digits. the folder is the database id of the Problem row not the polygon id so my polygon problem 616807 lives under test_cases/1/. every upload wipes the folder first so storage always mirrors the last fetch from polygon
-
-Running it
-
-see README.md. short version docker compose up -d for postgres redis and minIO a venv with requirement.txt copy .env.example to .env and fill in the polygon key and secret then migrate createsuperuser runserver. minIO console is at http://localhost:9001
+#### 3. What the backend does, in order.
+#### 4. Which external APIs are called, if any.
+#### 5. What is read or written in the database or storage.
+#### 6. What the user sees when the action completes.
