@@ -335,7 +335,7 @@ def index(request):
                         if not difficulty:
                             context['error'] = "Please select a difficulty level before migrating to database."
                             raise Exception(context['error'])
-                        Validate that difficulty is provided
+                        
                         # Try to find an existing Problem by polygon_id or by ProblemTag name matching the title
                         logger.info('Starting DB migration for polygon_id=%s', polygon_id)
                         problem_obj = Problem.objects.filter(Q(polygon_id=polygon_id)).first()
