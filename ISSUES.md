@@ -148,6 +148,8 @@ Split `index` into one view per action (fetch, migrate to db, migrate tests to d
 **Priority rationale**:
 second. every button re-does the full fetch first, even the ones that only need the problem row and the test list already in Redis. 9 to 12 Polygon calls that do nothing for the action, and the whole thing sits inside `transaction.atomic` so the db transaction stays open for minutes. a Polygon hiccup fails a migrate that never needed Polygon. splitting the views removes most of the other issues at the same time.
 
+this is also the root cause of C5, the only Critical outside my top three. order of work: first the two-line patch from C5 (move the storage block after the fetch, lines 191-233 to after 330) so nothing can wipe a good upload while the refactor is being done, then split the views. the patch takes an hour, the split takes days, and the patch is not a reason to skip the split coz C5 is only one of the things that falls out of this shape.
+
 ---
 
 ### [C3] Package ZIP is downloaded for one HTML file, `renderStatements` does the job in one call
