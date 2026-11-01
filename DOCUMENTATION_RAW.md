@@ -99,9 +99,230 @@ migrate_test_cases_to_db = request.POST.get('migrate_test_cases_to_db')  # None
 
 As the migrate values are None , every migration block gets skipped and the view only fetches and displays the problem. 
 
+These are the steps that happen once we get the problem id now:
+1. Prepare: Get the Polygon API client and checks whether this problem is already in the database, if it is already in the database then it gets the the problem from there and then loads the tags, difficulties and the main solution
+2. Get basic info: problem.info returns details such as the time and memory limits. A wrong ID fails here.
+3.  Get the statement (lines 240-242): it downloads the problem's package as a ZIP, unpacks it to a temp folder, reads problem.html, then deletes the folder. parse_problem_html pulls out the title, statement, input/output format and notes.
+4. Get test cases (line 257): this fetches every test case from Polygon, and it's  the slow part behind the "3-4 minutes" message.
+5. Cache them (line 260): the test cases go into Redis for 30 minutes.
+6.  Trim for display (lines 264-281): each test case gets a 50-character preview, plus its full text.
+7. Get the checker (lines 293-307): it finds which checker the problem uses, meaning the program that judges answers. If it's not one of the standard ones, it's marked custom.
+8. Build the result (lines 314-330): everything goes into context['fetched_problem'].
+9. Show the page (line 572): the migrate blocks are skipped, and render shows index.html with the data. The presence of fetched_problem also hides the spinner
 
 
 
 #### 4. Which external APIs are called, if any.
+
+only one service is called in the fetch api which is polygon
+
+#: 1
+Polygon method: problem.info
+Times called: 2
+Where: views.py:236, polygon_api.py:150
+What it gets: Time and memory limits
+────────────────────────────────────────
+#: 2
+Polygon method: problem.packages
+Times called: 1
+Where: polygon_api.py:155
+What it gets: List of built packages
+────────────────────────────────────────
+#: 3
+Polygon method: problem.package
+Times called: 1
+Where: polygon_api.py:187
+What it gets: The ZIP containing problem.html
+────────────────────────────────────────
+#: 4
+Polygon method: problem.tests
+Times called: 2
+Where: polygon_api.py:364, views.py:309
+What it gets: List of tests
+────────────────────────────────────────
+#: 5
+Polygon method: problem.testInput
+Times called: N
+Where: polygon_api.py:383
+What it gets: Each test's input
+────────────────────────────────────────
+#: 6
+Polygon method: problem.testAnswer
+Times called: N
+Where: polygon_api.py:390
+What it gets: Each test's output
+────────────────────────────────────────
+#: 7
+Polygon method: problem.checker
+Times call : 2
+Where: views.py:293, polygon_api.py:421
+What it gets: Check name
+
+Only if the problem is already in your database, these run first (views.py:159-178):
+
+┌───────────────────────────┬─────────────────┐
+│      Polygon method       │  What it does   │
+├───────────────────────────┼─────────────────┤
+│                           │ Refreshes       │
+│ problem.updateWorkingCopy │ Polygon's       │
+│                           │ working copy    │
+├───────────────────────────┼─────────────────┤
+│ problem.solutions         │ Lists solutions │
+├───────────────────────────┼─────────────────┤
+│ problem.viewSolution      │ Gets the main   │
+│                           │ solution's code │
+└───────────────────────────┴─────────────────┘
+#### 5. What is read or written in the database or storage.
+
+- if the problem is already in the database then it is check and then if it is present then the tags, difficulties and the db probllem is read
+- The test cases are stored in the redis on the fetch
+`A fetch only reads from Postgres and only writes to Redis. It doesn't touch MinIO.`
+
+`Postgres, read only:`
+
+`Table: django_session`
+`Read at: Before the view runs`
+`Why: Loads your session from the cookie`
+`When: Always`
+`────────────────────────────────────────`
+`Table: users_user`
+`Read at: user_passes_test, views.py:88`
+`Why: Checks you're logged-in staff`
+`When: Always`
+`────────────────────────────────────────`
+`Table: problems_problemtag`
+`Read at: views.py:110`
+`Why: Fills the tag dropdown`
+`When: Always`
+`────────────────────────────────────────`
+`Table: problems_problem`
+`Read at: views.py:146`
+`Why: Checks if the problem is already saved`
+`When: Always`
+`────────────────────────────────────────`
+`Table: Problem's tags (extra_tags)`
+`Read at: views.py:151`
+`Why: Shows its current tags`
+`When: Only if the problem is saved`
+
+`Postgres lls sitinside the migrate_* blocks, which a fetch skips. Sessions uestseither, because SESSION_SAVE_EVERY_REQUEST isn't`
+`set.`
+
+`Redis, wr_redis atviews.py:260 saves these for 30 minutes:`
+
+`Key: polygon_migration_test_cases_<id>_count  Value: Nu`
+`────────────────────────────────────────      Key: poly_test_<n>`
+`Value: One test as JSON: input, output,       descripti`
+  `So N testdoesn'tread Redis, because the read at line 249 only runs on mails,views.py:564 clears that problem's test keys.`
+
+`MinIO or Azure storage: nothing is read or`
+`written. e storagemigrate block and its cleanup.`
+
+`Local disk: the package ZIP is unpacked into a`
+`temp foldds(polygon_api.py:146, 239).`
+
+`The table names are Django's defaults, as models.py`
+`sets no db_table.`
+
+
+
+#### 6. What the user sees when the action completes.
+
+After a successful fetch, the same page reloads with the problem shown under the ID box, and your typed ID stays in the box. There's no green success banner, because that only appears after a migrate. The problem details appearing is the only sign that it worked. All of this comes from index.html:160-345.
+
+From top to bottom:
+1. Heading: "Fetched Problem: title (Polygon ID: id)"
+2. Database status: the saved problem ID and Algopath link
+3. Details table: slug, difficulty dropdown, tag search, time limit, memory limit, checker type, custom checker name (only if there is one) and test case count
+4. Statement sections: statement, input format, output format and notes, each shown only if it has content
+5. Two buttons: "Create/Update problem in Database" and "Migrate Test Cases to Storage"
+6. Test case table: index, 50-character previews, description and whether it's a sample, with a "View Full" button on anything longer. The heading shows the total
+7. One more button: "Migrate Test Description to Database"
+8. Main solution: the code with a Copy button
+
+What changes depending on whether the problem is already saved:
+
+Part of the page: Database ID and Algopath link
+New problse first."
+Already saved: Real ID and link
+───────────
+Part of the page: Difficulty and tags
+New probl
+Already saved: Filled in from the database
+───────────
+Part of the page: Storage and test description
+buttons
+New problem: Greyed out, with a tooltip
+Already s
+────────────────────────────────────────
+Part of t
+New problem: Yellow "Please migrate the problem
+to the da
+Already saved: The code
+
+
+
+
+### Migrating a problem to the database.
+#### 1. What the user clicks or submits.
+
+- the user sees the form and sees the button 
+![[Pasted image 20261101164405.png]]
+- the user can click the button in order to start the migrate to db
+- pressing any other buttons will tell the user to first migrate to db if it is already not migrated
+- The user needs to select the difficultly if its not already there in the problem or else it will give context['error'] = "Please select a difficulty level before migrating to database."
+
+The user picks a difficulty, optionally picks tags, and clicks "Create/Update problem in Database". That button only appears after a successful fetch, so a fetch always comes first.
+
+What the user does:
+1. Fetch a problem.
+2. Choose a difficulty (Easy, Medium or Hard), which is required.
+3. Add tags using the search box, which is optional.
+4. Click the button at index.html:253.
+
+If no difficulty is selected, JavaScript stops the submit, shows an alert and moves the focus to the dropdown (index.html:412-416).
+
+
+#### 2. What data the frontend sends to the backend.
+
+What gets submitted: a POST to / containing:
+
+csrfmiddlewaretoken=abc123
+problem_id=999999
+migrate_to_db=1
+difficulty=medium
+tags=dp
+tags=graphs
+
+┌───────────────┬────────────────────────────┐
+│     Field     │         Comes from         │
+├───────────────┼────────────────────────────┤
+│               │ Hidden field, filled in    │
+│ problem_id    │ with the fetched ID (line  │
+│               │ 245)                       │
+├───────────────┼────────────────────────────┤
+│               │ Hidden field, always 1     │
+│ migrate_to_db │ (line 246). It tells the   │
+│               │ view which action this is  │
+├───────────────┼────────────────────────────┤
+│               │ Hidden field, copied from  │
+│ difficulty    │ the dropdown by JavaScript │
+│               │  (lines 401-404)           │
+├───────────────┼────────────────────────────┤
+│               │ Hidden fields, one per     │
+│ tags          │ tag, created by            │
+│               │ updateHiddenInputs() (line │
+│               │  418)                      │
+└───────────────┴────────────────────────────┘
+
+The problem's title, statement and limits aren't sent. The server fetches them from Polygon again, which is the repeat we discussed.
+#### 3. What the backend does, in order.
+#### 4. Which external APIs are called, if any.
 #### 5. What is read or written in the database or storage.
 #### 6. What the user sees when the action completes.
+
+
+
+
+
+
