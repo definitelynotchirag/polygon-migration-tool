@@ -50,12 +50,11 @@ this one first coz it actively lies to the user. they change Medium to Hard, cli
 | 20 x 100 KB | 1.8 MB | 1.9 MB | - |
 | 20 x 1 MB | 18 MB | 19 MB | 0.4 s |
 | 50 x 2 MB | 95 MB | 95 MB | 0.6 s |
-| 50 x 5 MB | 227 MB | 237 MB | 16 s just to render the page server-side |
 
-Page size tracks raw test bytes 1:1. The browser itself did not crash or get slow, even at 95 MB on localhost. The preview fields exist to keep this table light, but the full text goes out alongside them, so they don't reduce the page size at all.
+Page size tracks raw test bytes 1:1. The browser itself did not crash or get slow, even at 95 MB on localhost. Polygon packages are in practice limited to around 100 MB of tests (not stated in the API docs, from problemsetter reports), so the 95 MB row is close to the worst case this tool will ever see. The preview fields exist to keep this table light, but the full text goes out alongside them, so they don't reduce the page size at all.
 
 **Impact**:
-- Page HTML grows with the total size of all tests. The cost is not the browser, it is transfer time over the network (95 MB on a 20 Mbps link is about 40 s on top of the 3-4 minute fetch) and server memory, since Django builds the whole string in RAM before sending a byte
+- Page HTML grows with the total size of all tests. The cost is not the browser, it is transfer time over the network and server memory, since Django builds the whole string in RAM before sending a byte. Bounded: at most about 40 s extra transfer (95 MB on a 20 Mbps link) on the largest problems Polygon accepts, nothing noticeable on ordinary ones
 - Stacks on P3, a reverse proxy or browser timeout gets more likely
 - The 50-char previews do not save anything
 
