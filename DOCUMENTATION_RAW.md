@@ -317,12 +317,343 @@ tags=graphs
 
 The problem's title, statement and limits aren't sent. The server fetches them from Polygon again, which is the repeat we discussed.
 #### 3. What the backend does, in order.
+ The main steps run inside transaction.atomic(), so a failure undoes every database write.
+
+Full order, with the steps you missed in bold:
+
+1. Re-run the fetch (lines 146-330): Polygon info, ZIP and checker. Test cases come from Redis if they're there, otherwise from Polygon (line 249).
+2. Check the difficulty and raise an error if it's missing (line 335).
+3. Find the problem by polygon_id, then update it or create it (lines 341-385).
+4. Clear the tags, then get or create each one (lines 397-419).
+5. Put the final tags in context (lines 422-423).
+6. Get test cases from Redis, or from Polygon if they're missing (lines 427-433).
+7. Update or create the sample tests only (lines 440-464). All the other tests aren't saved here.
+8. Re-read the problem from the database (line 467).
+9. Fetch the main solution from Polygon (lines 471-496).
+10. Render the page with the blue "Database Operation" message (line 572).
 #### 4. Which external APIs are called, if any.
+
+For the migrate-to-database flow, it's again only the Polygon API. Most calls come from re-running the fetch, and the test downloads are skipped if the tests are still in Redis.
+
+┌──────────────┬─────┬─────────────┬───────┐
+│              │ Tim │             │       │
+│   Polygon    │ es  │    Where    │  Why  │
+│    method    │ cal │             │       │
+│              │ led │             │       │
+├──────────────┼─────┼─────────────┼───────┤
+│              │     │ views.py:23 │ Limit │
+│ problem.info │ 2   │ 6, polygon_ │ s,    │
+│              │     │ api.py:150  │ name  │
+├──────────────┼─────┼─────────────┼───────┤
+│              │     │             │ Finds │
+│ problem.pack │ 1   │ polygon_api │  the  │
+│ ages         │     │ .py:155     │ packa │
+│              │     │             │ ge    │
+├──────────────┼─────┼─────────────┼───────┤
+│              │     │             │ Downl │
+│ problem.pack │ 1   │ polygon_api │ oads  │
+│ age          │     │ .py:187     │ the   │
+│              │     │             │ ZIP   │
+├──────────────┼─────┼─────────────┼───────┤
+│ problem.test │ 1   │ views.py:30 │ Test  │
+│ s            │     │ 9           │ count │
+├──────────────┼─────┼─────────────┼───────┤
+│ problem.chec │     │ views.py:29 │ Check │
+│ ker          │ 2   │ 3, polygon_ │ er    │
+│              │     │ api.py:421  │ name  │
+├──────────────┼─────┼─────────────┼───────┤
+│ problem.solu │     │ views.py:47 │ Lists │
+│ tions        │ 1   │ 4           │  solu │
+│              │     │             │ tions │
+├──────────────┼─────┼─────────────┼───────┤
+│              │     │             │ Main  │
+│ problem.view │ 1   │ views.py:48 │ solut │
+│ Solution     │     │ 9           │ ion   │
+│              │     │             │ code  │
+└──────────────┴─────┴─────────────┴───────┘
+
+That's 9 calls.
+
+If the problem is already saved, the if db_problem: block also runs first, adding 3 calls (views.py:160-177):
+
+┌───────────────────────────┬────────────────┐
+│      Polygon method       │  Times called  │
+├───────────────────────────┼────────────────┤
+│ problem.updateWorkingCopy │ 1              │
+├───────────────────────────┼────────────────┤
+│ problem.solutions         │ 1 (second      │
+│                           │ time)          │
+├───────────────────────────┼────────────────┤
+│ problem.viewSolution      │ 1 (second      │
+│                           │ time)          │
+└───────────────────────────┴────────────────┘
+
+If the tests have left Redis, for example after 30 minutes, get_all_test_cases runs at line 252. That adds one problem.tests call plus problem.testInput and problem.testAnswer for each test.
 #### 5. What is read or written in the database or storage.
+
+
+Postgres writes:
+
+Table: problems_problem
+What happens: Updates or creates one row
+Where: views.py:359, 369
+────────────────────────────────────────
+Table: problems_problem_extra_tags (default name)
+What happens: Removes all the problem's tag
+links, then adds the selected ones
+Where: views.py:397, 405
+────────────────────────────────────────
+Table: problems_problemtag
+What happens: Creates any tag that doesn't exist
+yet
+Where: views.py:404
+────────────────────────────────────────
+Table: problems_sampletestcase
+What happens: Updates existing sample rows, or
+creates new ones
+Where: views.py:455, 458
+
+Postgres reads:
+
+Table: django_session, users_user
+Why: Checks you're logged-in staff
+Where: views.py:88
+────────────────────────────────────────
+Table: problems_problemtag
+Why: Fill
+Where: views.py:110
+───────────
+Table: problems_problem
+Why: Find
+Where: views.py:146, 341, 467
+───────────
+Table: Tag links
+Why: Loade 151),
+then final tags (line 422)
+Where: vi
+────────────────────────────────────────        ble: pr
+Why: Loads existing samples                     ere: vi
+                                                dis:
+- Read: test cases at views.py:249 and again at line 42
+- Write: only if the tests weren't there. Same keys ase 253).
+- On failure: that problem's test keys are        cleared
+MinIO or emTestCase isn't touched here either, because the "Migrate Test Descoes that.
+
+All Postgtransaction.atomic() block, so a failure undoes
+all of th
+#### 6. What the user sees when the action completes.
+
+	On success, the same page reloads with: - A blue "Database Operation" box saying Problem '<title>' created in database successfully. or updated. If there's a custom checker, it adds Custom checker '<name>' detected. - The fetched problem details and test case table, as before - The real Database Problem ID and Algopath link - The storage and test description buttons, now clickable - The main solution code with its Copy button, if Polygon returned one - The final tags On failure, the page shows the red error box with Migration failed and all changes have been rolled back. Reason: ..., and no problem details if the failure came before the details were built. If no difficulty is selected, the browser shows an alert and nothing is sent.
+
+### Migrating test cases to the database.
+
+#### 1. What the user clicks or submits.
+What the user does:
+1. Fetch a problem.
+2. Choose a difficulty (Easy, Medium or Hard), which is required.
+3. Add tags using the search box, which is optional.
+4. Once the problem is saved into the database
+5. The user clicks "Migrate Test Description to Database" (index.html:320), below the test case table. It appears after a fetch and is greyed out until the problem is saved to the database. There's nothing to fill in.
+#### 2. What data the frontend sends to the backend.
+
+A POST to /, with a spinner saying "Migrating test cases to database..." (index.html:446):
+
+csrfmiddlewaretoken=abc123
+problem_description = description
+                                    ptc.order = order
+                                    ptc.save()
+                                else:
+                                    # Create new test case
+                                    ProblemTestCase.objects.create(
+                                        problem=problem_obj,
+                                        is_sample=is_sample,
+                                        input=truncated_input,
+                                        output=truncated_output,
+                                        description=description,
+                                        order=order
+                                    )id=999999
+migrate_test_cases_to_db=1
+
+No test data is sent. The server gets it from Redis or Polygon.
+
+#### 3. What the backend does, in order.
+ 
+1. Loads the saved problem, its tags, difficulty and main solution (views.py:146-184).
+2. Re-runs the fetch: info, ZIP and checker (lines 236-330), with tests from Redis or Polygon (line 249).
+3. Finds the problem again, and raises an error if it's missing (lines 499-503).
+4. Gets the tests from Redis again, or Polygon if they're missing (lines 506-512).
+5. Loads existing ProblemTestCase rows, ordered by order (line 517).
+6. For each test (lines 519-550):
+   - Removes trailing whitespace.
+   - Skips it if the input or output is empty.
+   - Cuts input and output to the first 260 characters.
+   - Updates the row at the same position, or creates a new one.
+7. Sets the success message and renders the page (lines 551, 572).
+
+
+#### 4. Which external APIs are called, if any.
+
+Only the Polygon API. The button needs a saved problem, so the extra 3 calls always run.
+
+┌───────────────────────────┬──────────────┐
+│      Polygon method       │ Times called │
+├───────────────────────────┼──────────────┤
+│ problem.updateWorkingCopy │ 1            │
+├───────────────────────────┼──────────────┤
+│ problem.solutions         │ 1            │
+├───────────────────────────┼──────────────┤
+│ problem.viewSolution      │ 1            │
+├───────────────────────────┼──────────────┤
+│ problem.info              │ 2            │
+├───────────────────────────┼──────────────┤
+│ problem.packages          │ 1            │
+├───────────────────────────┼──────────────┤
+│ problem.package           │ 1            │
+├───────────────────────────┼──────────────┤
+│ problem.tests             │ 1            │
+├───────────────────────────┼──────────────┤
+│ problem.checker           │ 2            │
+└───────────────────────────┴──────────────┘
+
+Total: 10 calls with tests in Redis, or 11 + 2N without.
+#### 5. What is read or written in the database or storage.
+
+Where: Postgres writes
+Read:
+Written: problems_problemtestcase only: updates
+or creates rows
+────────────────────────────────────────
+Where: Postgres reads
+Read: django_session, users_user,
+problems_problemtag, problems_problem (twice),
+the problem's tags, problems_problemtestcase
+Written:
+────────────────────────────────────────
+Where: Redis
+Read: Tests, at lines 249 and 506
+Written: Only if they were missing (line 253)
+────────────────────────────────────────
+Where: MinIO or Azure
+Read: Nothing
+Written: Nothing
+
+Writes are inside transaction.atomic(). Nothing in this flow deletes rows.
+
+#### 6. What the user sees when the action completes.
+
+The page reloads with a green Success box saying Test cases description migrated to database Successfully., plus the usual problem details, tests and main solution. There's no count of how many were saved or skipped. On failure, the red error box appears instead.
+
+### Uploading test cases to cloud storage.
+#### 1. What the user clicks or submits.
+
+1. Fetch a problem.
+2. Choose a difficulty (Easy, Medium or Hard), which is required.
+3. Add tags using the search box, which is optional.
+4. Once the problem is saved into the database
+5. The user clicks "Migrate Test Cases to Storage" (index.html:260), next to the database button. It's greyed out until the problem is saved to the database, and there's nothing to fill in.
+#### 2. What data the frontend sends to the backend.
+
+A POST to /, with a spinner saying "Uploading test cases to storage..." (index.html:438):
+
+csrfmiddlewaretoken=abc123
+problem_id=999999
+migrate_to_azure=1
+
+The field is still called migrate_to_azure from the original code, even though the upload goes to whichever storage is configured.
+
+#### 3. What the backend does, in order.
+
+`Unlike the database flow, the upload runs before the fetch steps.`
+
+1. `Loads the saved problem, tags, difficulty and main solution (views.py:146-184).`
+2. `Finds the problem, and shows an error if it's missing (lines 193-197).`
+3. `Creates the storage client from STORAGE_PROVIDER (line 200).`
+4. `Deletes Redis keys matching oj_dev_with_redis_storage_test_cases_<db id>* (line 206).`
+`5. Checks for a custom checker (line 208).`
+`6. Gets tests from Redis, or Polygon if they're missing (polygon_api.py:632-636).`
+`7. Deletes everything under test_cases/<db id>/ in storage (line 645).`
+`8. Uploads each test's input and output, skipping any with an empty side (lines 648-656).`
+`9. If there's a custom checker: fetches it, compiles it with g++, and uploads the binary. If compiling fails, it uploads the source instead (lines 570-611).`
+`10. Builds the success message and lists the stored files (views.py:223-233).`
+`11. Re-runs the fetch: info, ZIP, checker, display data (lines 236-330).`
+`12. Renders the page.`
+
+#### 4. Which external APIs are called, if any.
+
+Two services are called: Polygon and your storage.
+
+┌────────────────────────┬──────────────────┐
+│     Polygon method     │   Times called   │
+├────────────────────────┼──────────────────┤
+│ problem.updateWorkingC │ 1                │
+│ opy                    │                  │
+├────────────────────────┼──────────────────┤
+│ problem.solutions      │ 1                │
+├────────────────────────┼──────────────────┤
+│ problem.viewSolution   │ 1                │
+├────────────────────────┼──────────────────┤
+│                        │ 4 (views.py:208, │
+│ problem.checker        │  293, 307, polyg │
+│                        │ on_api.py:585)   │
+├────────────────────────┼──────────────────┤
+│ problem.info           │ 2                │
+├────────────────────────┼──────────────────┤
+│ problem       │
+├────────────────────────┼──────────────────┤
+│ problem       │
+├────────────────────────┼──────────────────┤
+│ problem       │
+├────────────────────────┼──────────────────┤
+│ problemwith a │
+│                        │  custom checker  │
+└───────────────┘
+
+Total: 12or 13 + 2Nwithout, plus any viewFile calls.
+
+Storage calls (S3 API to MinIO):
+
+Call: list_objects_v2, then delete_objects
+Times: Ondelete is
+skipped if there's nothing there)
+────────────
+Call: put_object
+Times: 2 r a checker
+────────────────────────────────────────
+Call: list_objects_v2
+Times: Once more to show the final file list
+
+#### 5. What is read or written in the database or storage.
+
+
+`Where: Postgres`
+`Read: django_session, users_user,`
+`problems_problemtag, problems_problem (twice),`
+`the problem's tags`
+`Written: Nothing`
+`────────────────────────────────────────`
+`Where: Redis`
+`Read: Tests, at polygon_api.py:632 and`
+`views.py:249`
+`Written: Only if they were missing. Deletes`
+`oj_dev_... keys`
+`────────────────────────────────────────`
+`Where: Storage`
+`Read: Lists files`
+`Written: Deletes old files, writes new ones`
+
+`Files stored in the testcases bucket:`
+
+`test_cases/<db id>/01       input`
+`test_cases/<db id>/01.a     expected output`
+`test_cases/<db id>/custom_checker   or custom_checker.cpp`
+
+
 #### 6. What the user sees when the action completes.
 
 
+The page reloads with a green Success box:
 
+Uploaded 13 test case(s) to S3-compatible storage (http://localhost:9000)
+under test_cases/1/ (replaced 26 existing file(s)).
 
-
-
+The box also lists every stored file and has an "open storage console" link. It adds a line if tests were skipped or a checker was uploaded. On failure, the red error box appears instead.
