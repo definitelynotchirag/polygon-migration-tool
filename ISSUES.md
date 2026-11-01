@@ -7,7 +7,7 @@
 | Type           | Critical | High | Medium | Low | Total |
 | -------------- | -------- | ---- | ------ | --- | ----- |
 | Product Issues | -        | 1    | 5      | 3   | 9     |
-| Code Issues    | 1        | 5    | 3      | 9   | 18    |
+| Code Issues    | 2        | 5    | 4      | 7   | 18    |
 
 ---
 
@@ -69,7 +69,7 @@ second. the page HTML grows 1:1 with the raw test bytes. on a problem with tens 
 
 ### [P3] A fetch takes 3-4 minutes inside one web request
 
-**Severity**: High
+**Severity**: Medium
 
 **Location**: `problems/polygon_api.py:370-395` (`get_all_test_cases`), `problems/views.py:257`
 
@@ -248,7 +248,7 @@ why it matters: these rows look like test cases but cant be used as test cases. 
 
 ### [P4] Second problem with the same title cannot be migrated
 
-**Severity**: Medium
+**Severity**: High
 
 **Location**: `problems/views.py:285` (`slug = slugify(title)`), `:341` (lookup by `polygon_id` only), `:367-384` (create branch), `problems/models.py` (`slug` unique on `Problem`)
 
@@ -315,7 +315,7 @@ Staff users who are already logged in are sent to the homepage, non-staff users 
 
 ### [P7] "Main solution" can show a deliberately wrong solution
 
-**Severity**: Low
+**Severity**: Medium
 
 **Location**: `problems/views.py:170-172`, `:482-484`
 
@@ -332,7 +332,7 @@ Correct fallback is `MA`, then `OK`, else none, and show the tag next to the cod
 
 ### [P8] Statement, input format, output format and notes show raw HTML tags
 
-**Severity**: Medium
+**Severity**: Low
 
 **Location**: `problems/templates/problems/index.html:213`, `:221`, `:229`, `:237`
 
@@ -396,7 +396,7 @@ Move `views.py:206` to just after line 221, once `migrate_test_cases_to_storage`
 
 ### [C5] A good upload can be wiped by a failing display step
 
-**Severity**: High
+**Severity**: Critical
 
 **Location**: `problems/views.py:191-233` (storage block), `:236-330` (fetch re-run), `:557-561` (except)
 
@@ -440,7 +440,7 @@ Simplest fix: move the storage block (lines 191-233) to after line 330, so the f
 
 ### [C7] Stale `ProblemTestCase` rows are never deleted
 
-**Severity**: Medium
+**Severity**: High
 
 **Location**: `problems/views.py:517-550`
 
@@ -500,7 +500,7 @@ Use `update_fields` with the Polygon-owned list above, and never assign `editori
 
 ### [C10] `get_test_cases()` swallows every exception and the wrong count gets saved
 
-**Severity**: Low
+**Severity**: Medium
 
 **Location**: `problems/polygon_api.py:310-311`, `problems/views.py:309`, `:356`, `:382`
 
@@ -578,7 +578,7 @@ Use `problem_obj` directly.
 
 ### [C14] Main solution fetch is duplicated, and both copies run in the same request
 
-**Severity**: Low
+**Severity**: Medium
 
 **Location**: `problems/views.py:159-178`, `:474-492`
 
